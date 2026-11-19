@@ -4,30 +4,43 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Rozpakuj projekt
-        run: |
-          ls -la
-          for z in *.zip; do unzip -o "$z"; done
-          P=$(find . -name settings.gradle.kts -not -path "./.git/*" | head -1)
-          echo "Projekt: $P"
-          echo "PROJ=$(dirname "$P")" >> $GITHUB_ENV
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
-      - name: Build debug APK
-        working-directory: ${{ env.PROJ }}
-        run: gradle assembleDebug
+      - name: Buduj APK
+        run: |
+          set -o pipefail
+          {
+            ls -la
+            for z in *.zip; do unzip -o "$z"; done
+            P=$(find . -name settings.gradle.kts -not -path "./.git/*" | head -1)
+            echo "Projekt: $P"
+            cd "$(dirname "$P")"
+            gradle assembleDebug --stacktrace --no-daemon
+            cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/Teleport.apk"
+          } 2>&1 | tee "$GITHUB_WORKSPACE/build-log.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: Teleport-apk
-          path: ${{ env.PROJ }}/app/build/outputs/apk/debug/app-debug.apk
+          path: Teleport.apk
+      - name: Zapisz log bledu
+        if: failure()
+        run: |
+          [ -f build-log.txt ] || echo "Blad przed budowaniem (setup)" > build-log.txt
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -f build-log.txt
+          git commit -m "build log [skip ci]"
+          git push
